@@ -123,13 +123,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Desktop.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="Shell.h" />
+    <ClInclude Include="StartButton.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="Taskbar.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Desktop.cpp" />
     <ClCompile Include="Shell.cpp" />
+    <ClCompile Include="StartButton.cpp" />
+    <ClCompile Include="Taskbar.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Shell.rc" />
