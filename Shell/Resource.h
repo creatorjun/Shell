@@ -16,6 +16,12 @@
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
 #endif
+
+// [[[ 여기에 새 리소스 ID 추가 ]]]
+#define IDR_BG_JPG              129
+#define IDR_START_PNG           130
+
+
 // 다음은 새 개체에 사용할 기본값입니다.
 //
 #ifdef APSTUDIO_INVOKED
