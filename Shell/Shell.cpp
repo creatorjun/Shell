@@ -1,4 +1,6 @@
-﻿// Shell.cpp : 애플리케이션 진입점 및 모듈 로더 역할을 합니다.
+﻿// creatorjun/shell/Shell-04869ccf080a38ea887a3d00139afecc32776daa/Shell/Shell.cpp
+
+// Shell.cpp : 애플리케이션 진입점 및 모듈 로더 역할을 합니다.
 //
 
 // windows.h 와 GDI+의 min/max 매크로 충돌을 방지합니다.
@@ -22,6 +24,7 @@ using namespace Gdiplus;        // GDI+ 네임스페이스
 // (이 파일들은 앞으로 생성할 파일입니다)
 #include "Desktop.h"
 #include "Taskbar.h"
+#include "StartMenu.h"          // [추가] 시작 메뉴 모듈 헤더 포함
 // --- [모듈 포함 끝] ---
 
 
@@ -99,12 +102,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         Desktop_SetWallpaper(g_imgBackground);
     }
 
-    // 3. [모듈 호출] 작업표시줄(Taskbar) 모듈 초기화 (창 클래스 등록)
+    // 3. [모듈 호출] 작업표시줄(Taskbar) 및 시작메뉴(StartMenu) 모듈 초기화 (창 클래스 등록)
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_SHELL, szWindowClass, MAX_LOADSTRING);
 
     // Taskbar 모듈에 창 클래스 이름과 등록을 위임합니다.
     Taskbar_Register(hInstance, szWindowClass);
+
+    // --- [추가] 시작 메뉴 모듈의 창 클래스를 등록합니다. ---
+    StartMenu_Register(hInstance);
+    // --- [추가 끝] ---
 
 
     // 4. [모듈 호출] 작업표시줄(Taskbar) 생성
