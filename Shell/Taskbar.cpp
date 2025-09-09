@@ -1,5 +1,3 @@
-// creatorjun/shell/Shell-04869ccf080a38ea887a3d00139afecc32776daa/Shell/Taskbar.cpp
-
 // Taskbar.cpp : 작업표시줄(AppBar) 창 생성, 등록 및 메시지 처리를 구현합니다.
 //
 
@@ -7,312 +5,406 @@
 #define NOMINMAX
 
 #include "framework.h"
-#include "Taskbar.h"        // 이 모듈의 헤더
-#include "StartButton.h"    // 시작 버튼 그리기 모듈 포함
-#include "StartMenu.h"      // [추가] 시작 메뉴 모듈 헤더
-#include "Shell.h"          // 리소스 ID (IDM_ABOUT 등)
-#include "Resource.h"       // 리소스 ID
+#include "Taskbar.h"
+#include "StartButton.h"
+#include "StartMenu.h"
+#include "Shell.h"
+#include "Resource.h"
+#include "Constants.h"
 
-#include <shellapi.h>       // APPBARDATA, SHAppBarMessage 등을 위해 필수
-#include <windowsx.h>       // GET_X_LPARAM, GET_Y_LPARAM 매크로 사용
-#include <memory>           // [추가] std::unique_ptr 사용을 위해 포함
+#include <shellapi.h>
+#include <windowsx.h>
+#include <memory>
+#include <utility> // std::pair
+#include <algorithm> // std::min, std::max
 
 // --- [GDI+ 설정] ---
-#include <Objidl.h>          // IStream 등을 위해 GDI+보다 먼저 포함
-#include <gdiplus.h>         // GDI+ 헤더
-using namespace Gdiplus;     // GDI+ 네임스페이스
+#include <Objidl.h>
+#include <gdiplus.h>
+using namespace Gdiplus;
 // --- [GDI+ 끝] ---
 
-
-// --- [외부 함수 선언] ---
 INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
-// --- [선언 끝] ---
 
-
-static HINSTANCE g_hInstTaskbar;
-
-// --- [수정: TASKBAR_DATA 구조체] ---
-struct TASKBAR_DATA
+namespace
 {
-    std::unique_ptr<Gdiplus::Image> imgBackground;
-    std::unique_ptr<Gdiplus::Image> imgStart;
 
-    // 상태 관리 변수
-    BOOL bStartHover;
-    BOOL bMouseTracking;
-    BOOL bStartActive;
+    // --- [아크릴 효과 API 정의] ---
+    enum ACCENT_STATE { ACCENT_DISABLED = 0, ACCENT_ENABLE_ACRYLICBLURBEHIND = 4 };
+    struct ACCENT_POLICY { ACCENT_STATE AccentState; DWORD AccentFlags; DWORD GradientColor; DWORD AnimationId; };
+    struct WINDOWCOMPOSITIONATTRIBDATA { int Attrib; PVOID pvData; SIZE_T cbData; };
+    using pSetWindowCompositionAttribute = BOOL(WINAPI*)(HWND, WINDOWCOMPOSITIONATTRIBDATA*);
 
-    HWND hStartMenu;
-
-    // [추가] 생성자를 정의하여 모든 멤버를 즉시 초기화합니다.
-    TASKBAR_DATA() :
-        imgBackground(nullptr),
-        imgStart(nullptr),
-        bStartHover(FALSE),
-        bMouseTracking(FALSE),
-        bStartActive(FALSE),
-        hStartMenu(NULL)
+    // --- [내부 데이터 구조체] ---
+    struct TASKBAR_DATA
     {
-    }
-};
-// --- [수정 끝] ---
+        std::unique_ptr<Gdiplus::Image> imgBackground;
+        std::unique_ptr<Gdiplus::Image> imgStart;
+        std::unique_ptr<Gdiplus::TextureBrush> brushBackground;
 
+        Gdiplus::Color gradientColorLeft;
+        Gdiplus::Color gradientColorRight;
 
-// --- [시작 버튼 영역 계산 헬퍼] ---
-void GetStartButtonRect(HWND hWnd, RECT* pButtonRect)
-{
-    if (!pButtonRect) return;
+        BOOL bStartHover;
+        BOOL bMouseTracking;
+        BOOL bStartActive;
+        HWND hStartMenu;
 
-    RECT rcClient;
-    GetClientRect(hWnd, &rcClient);
-    int clientWidth = rcClient.right - rcClient.left;
-    int clientHeight = rcClient.bottom - rcClient.top;
-
-    const int hoverSize = 40;
-    int hoverX = (clientWidth - hoverSize) / 2;
-    int hoverY = (clientHeight - hoverSize) / 2;
-
-    SetRect(pButtonRect, hoverX, hoverY, hoverX + hoverSize, hoverY + hoverSize);
-}
-// --- [함수 끝] ---
-
-
-/**
- * @brief 작업표시줄(AppBar)의 주 윈도우 프로시저(WndProc)
- */
-LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
-{
-    TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
-
-    // --- [새 핸들러: 포커스 모델용] ---
-    if (message == WM_APP_MENU_CLOSED)
-    {
-        if (pData && pData->bStartActive)
+        TASKBAR_DATA() :
+            imgBackground(nullptr),
+            imgStart(nullptr),
+            brushBackground(nullptr),
+            gradientColorLeft(ACRYLIC_EFFECT_ALPHA, ACRYLIC_EFFECT_RED, ACRYLIC_EFFECT_GREEN, ACRYLIC_EFFECT_BLUE),
+            gradientColorRight(ACRYLIC_EFFECT_ALPHA, ACRYLIC_EFFECT_RED, ACRYLIC_EFFECT_GREEN, ACRYLIC_EFFECT_BLUE),
+            bStartHover(FALSE),
+            bMouseTracking(FALSE),
+            bStartActive(FALSE),
+            hStartMenu(NULL)
         {
-            pData->bStartActive = FALSE;
+        }
+    };
 
-            POINT ptCursor;
-            GetCursorPos(&ptCursor);
-            ScreenToClient(hWnd, &ptCursor);
+    static HINSTANCE g_hInstTaskbar;
 
-            RECT rcButton;
-            GetStartButtonRect(hWnd, &rcButton);
+    // --- [내부 헬퍼 함수] ---
+    float HueToRgb(float p, float q, float t)
+    {
+        if (t < 0.0f) t += 1.0f;
+        if (t > 1.0f) t -= 1.0f;
+        if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+        if (t < 1.0f / 2.0f) return q;
+        if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+        return p;
+    }
 
-            BOOL bIsOverButton = PtInRect(&rcButton, ptCursor);
-            if (bIsOverButton != pData->bStartHover)
+    void HslToRgb(float h, float s, float l, BYTE* r, BYTE* g, BYTE* b)
+    {
+        if (s == 0.0f) {
+            *r = *g = *b = static_cast<BYTE>(l * 255);
+        }
+        else {
+            float q = l < 0.5f ? l * (1.0f + s) : l + s - l * s;
+            float p = 2.0f * l - q;
+            *r = static_cast<BYTE>(HueToRgb(p, q, h + 1.0f / 3.0f) * 255);
+            *g = static_cast<BYTE>(HueToRgb(p, q, h) * 255);
+            *b = static_cast<BYTE>(HueToRgb(p, q, h - 1.0f / 3.0f) * 255);
+        }
+    }
+
+    void RgbToHsl(BYTE r, BYTE g, BYTE b, float* h, float* s, float* l)
+    {
+        float rf = r / 255.0f;
+        float gf = g / 255.0f;
+        float bf = b / 255.0f;
+        float maxVal = std::max({ rf, gf, bf });
+        float minVal = std::min({ rf, gf, bf });
+        *h = *s = 0;
+        *l = (maxVal + minVal) / 2.0f;
+        if (maxVal != minVal) {
+            float d = maxVal - minVal;
+            *s = *l > 0.5f ? d / (2.0f - maxVal - minVal) : d / (maxVal + minVal);
+            if (maxVal == rf) *h = (gf - bf) / d + (gf < bf ? 6.0f : 0.0f);
+            else if (maxVal == gf) *h = (bf - rf) / d + 2.0f;
+            else *h = (rf - gf) / d + 4.0f;
+            *h /= 6.0f;
+        }
+    }
+
+    void EnableAcrylicEffect(HWND hWnd, Gdiplus::Color color)
+    {
+        HMODULE hUser32 = GetModuleHandle(L"user32.dll");
+        if (hUser32)
+        {
+            pSetWindowCompositionAttribute SetWindowCompositionAttribute =
+                (pSetWindowCompositionAttribute)GetProcAddress(hUser32, "SetWindowCompositionAttribute");
+            if (SetWindowCompositionAttribute)
             {
-                pData->bStartHover = bIsOverButton;
+                DWORD gradientColor = (color.GetA() << 24) | (color.GetB() << 16) | (color.GetG() << 8) | (color.GetR());
+                ACCENT_POLICY accent = { ACCENT_ENABLE_ACRYLICBLURBEHIND, 0, gradientColor, 0 };
+                WINDOWCOMPOSITIONATTRIBDATA data = { 19, &accent, sizeof(accent) };
+                SetWindowCompositionAttribute(hWnd, &data);
             }
-
-            InvalidateRect(hWnd, &rcButton, FALSE);
         }
-        return 0;
     }
-    // --- [새 핸들러 끝] ---
 
+    std::pair<Gdiplus::Color, Gdiplus::Color> GetWallpaperGradientColors()
+    {
+        WCHAR wallpaperPath[MAX_PATH];
+        Color defaultColor(ACRYLIC_EFFECT_ALPHA, ACRYLIC_EFFECT_RED, ACRYLIC_EFFECT_GREEN, ACRYLIC_EFFECT_BLUE);
 
-    switch (message)
-    {
-    case WM_CREATE:
-    {
-        CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
-        TASKBAR_DATA* pInitialData = (TASKBAR_DATA*)pCreate->lpCreateParams;
-        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pInitialData);
-        break;
-    }
-    case WM_COMMAND:
-    {
-        int wmId = LOWORD(wParam);
-        switch (wmId)
+        if (SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaperPath, 0))
         {
-        case IDM_ABOUT:
-            DialogBox(g_hInstTaskbar, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
-            break;
-        case IDM_EXIT:
-            DestroyWindow(hWnd);
-            break;
-        default:
-            return DefWindowProc(hWnd, message, wParam, lParam);
+            std::unique_ptr<Bitmap> wallpaperBitmap(Bitmap::FromFile(wallpaperPath));
+            if (wallpaperBitmap && wallpaperBitmap->GetLastStatus() == Ok)
+            {
+                UINT width = wallpaperBitmap->GetWidth();
+                UINT height = wallpaperBitmap->GetHeight();
+                Rect rectLeft(0, height - 10, 1, 10);
+                Rect rectRight(width - 1, height - 10, 1, 10);
+
+                Bitmap bmpLeft(1, 1);
+                Graphics gLeft(&bmpLeft);
+                gLeft.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+                gLeft.DrawImage(wallpaperBitmap.get(), Rect(0, 0, 1, 1), rectLeft.X, rectLeft.Y, rectLeft.Width, rectLeft.Height, UnitPixel);
+
+                Bitmap bmpRight(1, 1);
+                Graphics gRight(&bmpRight);
+                gRight.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+                gRight.DrawImage(wallpaperBitmap.get(), Rect(0, 0, 1, 1), rectRight.X, rectRight.Y, rectRight.Width, rectRight.Height, UnitPixel);
+
+                Color colorLeft, colorRight;
+                bmpLeft.GetPixel(0, 0, &colorLeft);
+                bmpRight.GetPixel(0, 0, &colorRight);
+
+                float h, s, l;
+                RgbToHsl(colorLeft.GetR(), colorLeft.GetG(), colorLeft.GetB(), &h, &s, &l);
+                l = std::max(0.20f, l); s = std::max(0.10f, s);
+                BYTE rL, gL, bL;
+                HslToRgb(h, s, l, &rL, &gL, &bL);
+
+                RgbToHsl(colorRight.GetR(), colorRight.GetG(), colorRight.GetB(), &h, &s, &l);
+                l = std::max(0.20f, l); s = std::max(0.10f, s);
+                BYTE rR, gR, bR;
+                HslToRgb(h, s, l, &rR, &gR, &bR);
+
+                return { Color(ACRYLIC_EFFECT_ALPHA, rL, gL, bL), Color(ACRYLIC_EFFECT_ALPHA, rR, gR, bR) };
+            }
         }
+        return { defaultColor, defaultColor };
     }
-    break;
 
-    case WM_PAINT:
+    void GetStartButtonRect(HWND hWnd, RECT* pButtonRect)
     {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hWnd, &ps);
-
+        if (!pButtonRect) return;
         RECT rcClient;
         GetClientRect(hWnd, &rcClient);
         int clientWidth = rcClient.right - rcClient.left;
         int clientHeight = rcClient.bottom - rcClient.top;
-
-        Bitmap memBitmap(clientWidth, clientHeight);
-        Graphics* memGfx = Graphics::FromImage(&memBitmap);
-
-        if (pData && pData->imgBackground)
-        {
-            TextureBrush tBrush(pData->imgBackground.get());
-            memGfx->FillRectangle(&tBrush, 0, 0, clientWidth, clientHeight);
-        }
-        else
-        {
-            Color bgColor;
-            bgColor.SetFromCOLORREF(GetSysColor(COLOR_WINDOW));
-            SolidBrush fallbackBrush(bgColor);
-            memGfx->FillRectangle(&fallbackBrush, 0, 0, clientWidth, clientHeight);
-        }
-
-        if (pData && pData->imgStart)
-        {
-            BOOL bShowHighlight = (pData->bStartHover || pData->bStartActive);
-            StartButton_Paint(memGfx, rcClient, pData->imgStart.get(), bShowHighlight);
-        }
-
-        Graphics screenGfx(hdc);
-        screenGfx.DrawImage(&memBitmap, 0, 0);
-
-        delete memGfx;
-
-        EndPaint(hWnd, &ps);
-    }
-    break;
-
-    case WM_MOUSEMOVE:
-    {
-        if (pData)
-        {
-            if (!pData->bMouseTracking)
-            {
-                TRACKMOUSEEVENT tme = { sizeof(tme) };
-                tme.dwFlags = TME_LEAVE;
-                tme.hwndTrack = hWnd;
-                if (TrackMouseEvent(&tme))
-                {
-                    pData->bMouseTracking = TRUE;
-                }
-            }
-
-            POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            RECT rcButton;
-            GetStartButtonRect(hWnd, &rcButton);
-            BOOL bIsOverButton = PtInRect(&rcButton, pt);
-
-            if (bIsOverButton != pData->bStartHover)
-            {
-                pData->bStartHover = bIsOverButton;
-                if (!pData->bStartActive)
-                {
-                    InvalidateRect(hWnd, &rcButton, FALSE);
-                }
-            }
-        }
-        break;
+        int hoverX = (clientWidth - START_BUTTON_HOVER_SIZE) / 2;
+        int hoverY = (clientHeight - START_BUTTON_HOVER_SIZE) / 2;
+        SetRect(pButtonRect, hoverX, hoverY, hoverX + START_BUTTON_HOVER_SIZE, hoverY + START_BUTTON_HOVER_SIZE);
     }
 
-    case WM_MOUSELEAVE:
+    LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
-        if (pData)
-        {
-            pData->bMouseTracking = FALSE;
+        TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
 
-            if (pData->bStartHover)
+        if (message == WM_APP_MENU_CLOSED)
+        {
+            if (pData && pData->bStartActive)
             {
-                pData->bStartHover = FALSE;
-                if (!pData->bStartActive)
+                pData->bStartActive = FALSE;
+                POINT ptCursor;
+                GetCursorPos(&ptCursor);
+                ScreenToClient(hWnd, &ptCursor);
+                RECT rcButton;
+                GetStartButtonRect(hWnd, &rcButton);
+                BOOL bIsOverButton = PtInRect(&rcButton, ptCursor);
+                if (bIsOverButton != pData->bStartHover) pData->bStartHover = bIsOverButton;
+                InvalidateRect(hWnd, &rcButton, FALSE);
+            }
+            return 0;
+        }
+
+        switch (message)
+        {
+        case WM_CREATE:
+        {
+            CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pCreate->lpCreateParams);
+            pData = (TASKBAR_DATA*)pCreate->lpCreateParams;
+
+            if (GRADIENT_EFFECT_ENABLED && pData)
+            {
+                auto colors = GetWallpaperGradientColors();
+                pData->gradientColorLeft = colors.first;
+                pData->gradientColorRight = colors.second;
+            }
+            break;
+        }
+        case WM_SETTINGCHANGE:
+        {
+            if (wParam == SPI_SETDESKWALLPAPER)
+            {
+                if (GRADIENT_EFFECT_ENABLED && pData)
                 {
-                    RECT rcButton;
-                    GetStartButtonRect(hWnd, &rcButton);
-                    InvalidateRect(hWnd, &rcButton, FALSE);
+                    auto colors = GetWallpaperGradientColors();
+                    pData->gradientColorLeft = colors.first;
+                    pData->gradientColorRight = colors.second;
+                    InvalidateRect(hWnd, NULL, TRUE);
                 }
             }
+            break;
+        }
+        case WM_COMMAND:
+        {
+            int wmId = LOWORD(wParam);
+            switch (wmId)
+            {
+            case IDM_ABOUT:
+                DialogBox(g_hInstTaskbar, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
+                break;
+            case IDM_EXIT:
+                DestroyWindow(hWnd);
+                break;
+            default:
+                return DefWindowProc(hWnd, message, wParam, lParam);
+            }
+            break;
+        }
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hWnd, &ps);
+            RECT rcClient;
+            GetClientRect(hWnd, &rcClient);
+            int clientWidth = rcClient.right - rcClient.left;
+            int clientHeight = rcClient.bottom - rcClient.top;
+
+            Bitmap memBitmap(clientWidth, clientHeight);
+            Graphics* memGfx = Graphics::FromImage(&memBitmap);
+
+            if (GRADIENT_EFFECT_ENABLED && pData)
+            {
+                Color opaqueLeft(255, pData->gradientColorLeft.GetR(), pData->gradientColorLeft.GetG(), pData->gradientColorLeft.GetB());
+                Color opaqueRight(255, pData->gradientColorRight.GetR(), pData->gradientColorRight.GetG(), pData->gradientColorRight.GetB());
+
+                LinearGradientBrush gradBrush(
+                    Point(0, 0), Point(clientWidth, 0),
+                    opaqueLeft, opaqueRight);
+                memGfx->FillRectangle(&gradBrush, 0, 0, clientWidth, clientHeight);
+
+                // [추가] 엠보싱 효과를 위한 하이라이트 및 그림자
+                Pen highlightPen(Color(80, 255, 255, 255), 1);
+                Pen shadowPen(Color(80, 0, 0, 0), 1);
+                memGfx->DrawLine(&highlightPen, 0, 0, clientWidth, 0);
+                memGfx->DrawLine(&shadowPen, 0, clientHeight - 1, clientWidth, clientHeight - 1);
+            }
+            else if (pData && pData->brushBackground)
+            {
+                memGfx->FillRectangle(pData->brushBackground.get(), 0, 0, clientWidth, clientHeight);
+            }
+            else
+            {
+                SolidBrush fallbackBrush(Color(255, 0, 0, 0));
+                memGfx->FillRectangle(&fallbackBrush, 0, 0, clientWidth, clientHeight);
+            }
+
+            if (pData && pData->imgStart)
+            {
+                BOOL bShowHighlight = (pData->bStartHover || pData->bStartActive);
+                StartButton_Paint(memGfx, rcClient, pData->imgStart.get(), bShowHighlight);
+            }
+
+            Graphics screenGfx(hdc);
+            screenGfx.DrawImage(&memBitmap, 0, 0);
+            delete memGfx;
+            EndPaint(hWnd, &ps);
+            break;
+        }
+        case WM_MOUSEMOVE:
+        {
+            if (pData)
+            {
+                if (!pData->bMouseTracking)
+                {
+                    TRACKMOUSEEVENT tme = { sizeof(tme) };
+                    tme.dwFlags = TME_LEAVE;
+                    tme.hwndTrack = hWnd;
+                    if (TrackMouseEvent(&tme)) pData->bMouseTracking = TRUE;
+                }
+                POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                RECT rcButton;
+                GetStartButtonRect(hWnd, &rcButton);
+                BOOL bIsOverButton = PtInRect(&rcButton, pt);
+                if (bIsOverButton != pData->bStartHover)
+                {
+                    pData->bStartHover = bIsOverButton;
+                    if (!pData->bStartActive) InvalidateRect(hWnd, &rcButton, FALSE);
+                }
+            }
+            break;
+        }
+        case WM_MOUSELEAVE:
+        {
+            if (pData)
+            {
+                pData->bMouseTracking = FALSE;
+                if (pData->bStartHover)
+                {
+                    pData->bStartHover = FALSE;
+                    if (!pData->bStartActive)
+                    {
+                        RECT rcButton;
+                        GetStartButtonRect(hWnd, &rcButton);
+                        InvalidateRect(hWnd, &rcButton, FALSE);
+                    }
+                }
+            }
+            return 0;
+        }
+        case WM_LBUTTONDOWN:
+        {
+            if (pData && pData->hStartMenu)
+            {
+                POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                RECT rcButton;
+                GetStartButtonRect(hWnd, &rcButton);
+                if (PtInRect(&rcButton, pt))
+                {
+                    pData->bStartActive = !pData->bStartActive;
+                    if (pData->bStartActive) StartMenu::Show(pData->hStartMenu, hWnd);
+                    else StartMenu::Hide(pData->hStartMenu);
+                    InvalidateRect(hWnd, &rcButton, FALSE);
+                }
+                else
+                {
+                    if (pData->bStartActive)
+                    {
+                        pData->bStartActive = FALSE;
+                        StartMenu::Hide(pData->hStartMenu);
+                        InvalidateRect(hWnd, &rcButton, FALSE);
+                    }
+                }
+            }
+            break;
+        }
+        case WM_RBUTTONDOWN:
+        {
+            if (pData && pData->bStartActive)
+            {
+                pData->bStartActive = FALSE;
+                StartMenu::Hide(pData->hStartMenu);
+                RECT rcButton;
+                GetStartButtonRect(hWnd, &rcButton);
+                InvalidateRect(hWnd, &rcButton, FALSE);
+            }
+            break;
+        }
+        case WM_DESTROY:
+        {
+            APPBARDATA abd = {};
+            abd.cbSize = sizeof(APPBARDATA);
+            abd.hWnd = hWnd;
+            SHAppBarMessage(ABM_REMOVE, &abd);
+            if (pData)
+            {
+                if (pData->hStartMenu) DestroyWindow(pData->hStartMenu);
+                delete pData;
+            }
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)NULL);
+            PostQuitMessage(0);
+            break;
+        }
+        default:
+            return DefWindowProc(hWnd, message, wParam, lParam);
         }
         return 0;
     }
 
+} // 익명 네임스페이스 끝
 
-    case WM_LBUTTONDOWN:
-    {
-        if (pData && pData->hStartMenu)
-        {
-            POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            RECT rcButton;
-            GetStartButtonRect(hWnd, &rcButton);
-
-            if (PtInRect(&rcButton, pt))
-            {
-                pData->bStartActive = !pData->bStartActive;
-
-                if (pData->bStartActive)
-                {
-                    StartMenu_Show(pData->hStartMenu, hWnd);
-                }
-                else
-                {
-                    StartMenu_Hide(pData->hStartMenu);
-                }
-
-                InvalidateRect(hWnd, &rcButton, FALSE);
-            }
-            else
-            {
-                if (pData->bStartActive)
-                {
-                    pData->bStartActive = FALSE;
-                    StartMenu_Hide(pData->hStartMenu);
-                    InvalidateRect(hWnd, &rcButton, FALSE);
-                }
-            }
-        }
-        break;
-    }
-
-    case WM_RBUTTONDOWN:
-    {
-        if (pData && pData->bStartActive)
-        {
-            pData->bStartActive = FALSE;
-            StartMenu_Hide(pData->hStartMenu);
-
-            RECT rcButton;
-            GetStartButtonRect(hWnd, &rcButton);
-            InvalidateRect(hWnd, &rcButton, FALSE);
-        }
-        break;
-    }
-
-
-    case WM_DESTROY:
-    {
-        APPBARDATA abd = {};
-        abd.cbSize = sizeof(APPBARDATA);
-        abd.hWnd = hWnd;
-        SHAppBarMessage(ABM_REMOVE, &abd);
-
-        if (pData)
-        {
-            if (pData->hStartMenu)
-            {
-                DestroyWindow(pData->hStartMenu);
-            }
-            delete pData;
-        }
-        SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)NULL);
-
-        PostQuitMessage(0);
-    }
-    break;
-    default:
-        return DefWindowProc(hWnd, message, wParam, lParam);
-    }
-    return 0;
-}
-
-
-/**
- * @brief 작업표시줄(AppBar)의 윈도우 클래스를 시스템에 등록합니다.
- */
-ATOM Taskbar_Register(HINSTANCE hInstance, const WCHAR* szWindowClass)
+ATOM Taskbar::Register(HINSTANCE hInstance, const WCHAR* szWindowClass)
 {
     WNDCLASSEXW wcex;
     wcex.cbSize = sizeof(WNDCLASSEX);
@@ -327,60 +419,38 @@ ATOM Taskbar_Register(HINSTANCE hInstance, const WCHAR* szWindowClass)
     wcex.lpszMenuName = nullptr;
     wcex.lpszClassName = szWindowClass;
     wcex.hIconSm = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_SMALL));
-
     return RegisterClassExW(&wcex);
 }
 
-
-/**
- * @brief 작업표시줄(AppBar) 윈도우를 생성하고 화면에 표시합니다.
- */
-BOOL Taskbar_Create(HINSTANCE hInst, int nCmdShow,
+BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
     const WCHAR* szTitle, const WCHAR* szWindowClass,
     std::unique_ptr<Gdiplus::Image> bg, std::unique_ptr<Gdiplus::Image> start)
 {
     g_hInstTaskbar = hInst;
-
-    // --- [수정: RAII 및 생성자 활용] ---
-    // 1. new TASKBAR_DATA()를 호출하면 새로 정의한 생성자가 모든 멤버를 초기화합니다.
     TASKBAR_DATA* pData = new TASKBAR_DATA();
     if (!pData) return FALSE;
 
-    // 2. unique_ptr의 소유권을 pData의 멤버로 이동(move)
     pData->imgBackground = std::move(bg);
     pData->imgStart = std::move(start);
+    if (pData->imgBackground)
+    {
+        pData->brushBackground = std::make_unique<TextureBrush>(pData->imgBackground.get());
+    }
 
-    // 3. [제거] 수동 초기화 코드가 더 이상 필요 없습니다.
-    // pData->bStartHover = FALSE;
-    // pData->bMouseTracking = FALSE;
-    // pData->bStartActive = FALSE;
-    // pData->hStartMenu = NULL;
-    // --- [수정 끝] ---
-
-    int barHeight = 48;
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-
     HWND hWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-        szWindowClass,
-        szTitle,
-        WS_POPUP,
-        0, 0,
-        screenWidth, barHeight,
-        nullptr,
-        nullptr,
-        hInst,
-        (LPVOID)pData
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, szWindowClass, szTitle, WS_POPUP,
+        0, 0, screenWidth, TASKBAR_HEIGHT,
+        nullptr, nullptr, hInst, (LPVOID)pData
     );
-
     if (!hWnd)
     {
         delete pData;
         return FALSE;
     }
 
-    pData->hStartMenu = StartMenu_Create(hInst, hWnd);
+    pData->hStartMenu = StartMenu::Create(hInst, hWnd);
     if (!pData->hStartMenu)
     {
         DestroyWindow(hWnd);
@@ -390,7 +460,6 @@ BOOL Taskbar_Create(HINSTANCE hInst, int nCmdShow,
     APPBARDATA abd = {};
     abd.cbSize = sizeof(APPBARDATA);
     abd.hWnd = hWnd;
-
     if (!SHAppBarMessage(ABM_NEW, &abd))
     {
         DestroyWindow(hWnd);
@@ -400,15 +469,11 @@ BOOL Taskbar_Create(HINSTANCE hInst, int nCmdShow,
     abd.uEdge = ABE_BOTTOM;
     abd.rc.left = 0;
     abd.rc.right = screenWidth;
-    abd.rc.top = screenHeight - barHeight;
+    abd.rc.top = screenHeight - TASKBAR_HEIGHT;
     abd.rc.bottom = screenHeight;
-
     SHAppBarMessage(ABM_QUERYPOS, &abd);
-
     MoveWindow(hWnd, abd.rc.left, abd.rc.top, abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top, TRUE);
-
     ShowWindow(hWnd, nCmdShow);
     UpdateWindow(hWnd);
-
     return TRUE;
 }

@@ -125,6 +125,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Constants.h" />
     <ClInclude Include="Desktop.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="GraphicsUtil.h" />

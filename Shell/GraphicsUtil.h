@@ -1,12 +1,11 @@
 #pragma once
 
 // 필요한 GDI+ 클래스를 전방 선언합니다.
-// 이렇게 하면 헤더 파일에 GDI+ 전체를 포함할 필요가 없어지고,
-// 컴파일러가 타입을 인식할 수 있게 됩니다.
 namespace Gdiplus
 {
     class GraphicsPath;
-    struct RectF; // RectF는 구조체이므로 전방 선언이 가능합니다.
+    // [수정] RectF를 struct 대신 class로 전방 선언하여 경고 C4099를 해결합니다.
+    class RectF;
 }
 
 /**
