@@ -127,6 +127,7 @@
   <ItemGroup>
     <ClInclude Include="Desktop.h" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="GraphicsUtil.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="Shell.h" />
     <ClInclude Include="StartButton.h" />
@@ -136,6 +137,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Desktop.cpp" />
+    <ClCompile Include="GraphicsUtil.cpp" />
     <ClCompile Include="Shell.cpp" />
     <ClCompile Include="StartButton.cpp" />
     <ClCompile Include="StartMenu.cpp" />

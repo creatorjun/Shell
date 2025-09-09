@@ -6,7 +6,9 @@
 // windows.h 와 GDI+의 min/max 매크로 충돌을 방지합니다.
 #define NOMINMAX
 
-#include "StartButton.h" // 이 모듈의 헤더
+#include "framework.h"      // [추가] 미리 컴파일된 헤더를 위해 최상단에 포함
+#include "StartButton.h"    // 이 모듈의 헤더
+#include "GraphicsUtil.h"   // [추가] 둥근 사각형 헬퍼 함수를 위해 포함
 
 // --- GDI+ 설정 ---
 #include <Objidl.h>          // IStream 등을 위해 GDI+보다 먼저 포함
@@ -15,38 +17,9 @@ using namespace Gdiplus;     // GDI+ 네임스페이스
 // --- GDI+ 끝 ---
 
 
-// --- [수정: 링크 오류 해결] ---
-/**
- * @brief GraphicsPath 객체에 둥근 사각형 경로를 추가하는 헬퍼 함수입니다.
- * [수정] 'static'을 추가하여 이 함수가 이 파일(.cpp) 내부에서만 보이도록 합니다.
- * (링커 충돌 방지)
- * @param path (입출력) 경로를 추가할 GDI+ GraphicsPath 객체 포인터
- * @param rect (입력) 사각형의 위치와 크기 (RectF 사용)
- * @param cornerRadius (입력) 모서리의 반경
- */
-static void CreateRoundedRectPath(GraphicsPath* path, RectF rect, REAL cornerRadius)
-{
-    if (!path) return;
-
-    REAL dia = cornerRadius * 2.0f;
-    if (dia <= 0.0f)
-    {
-        // 반경이 0이면 단순 사각형 추가
-        path->AddRectangle(rect);
-        return;
-    }
-
-    // GDI+는 4개의 호와 4개의 선을 직접 연결해야 둥근 사각형이 됩니다.
-    // (시계 방향: 좌상단 -> 우상단 -> 우하단 -> 좌하단)
-    path->AddArc(rect.X, rect.Y, dia, dia, 180, 90); // 좌상단 호
-    path->AddArc(rect.GetRight() - dia, rect.Y, dia, dia, 270, 90); // 우상단 호
-    path->AddArc(rect.GetRight() - dia, rect.GetBottom() - dia, dia, dia, 0, 90); // 우하단 호
-    path->AddArc(rect.X, rect.GetBottom() - dia, dia, dia, 90, 90); // 좌하단 호
-
-    // 경로를 닫아 도형을 완성합니다.
-    path->CloseFigure();
-}
-// --- [수정 끝] ---
+// --- [제거] ---
+// 중복되던 CreateRoundedRectPath 함수를 GraphicsUtil.cpp로 이동했으므로 제거합니다.
+// --- [제거 끝] ---
 
 
 /**
@@ -85,12 +58,12 @@ void StartButton_Paint(Gdiplus::Graphics* gfx, RECT taskbarRect, Gdiplus::Image*
     {
         // 30% 불투명 하늘색 (Alpha: 76, R: 204, G: 153, B: 255)
         SolidBrush hoverBrush(Color(76, 204, 153, 255));
-        REAL cornerRadius = 0.0f; // 직각 사각형
+        float cornerRadius = 0.0f; // 직각 사각형
 
         // GDI+용 RectF 정의
         RectF hoverRectF((REAL)hoverX, (REAL)hoverY, (REAL)hoverSize, (REAL)hoverSize);
 
-        // 둥근 사각형 경로 생성
+        // 둥근 사각형 경로 생성 (이제 GraphicsUtil.h의 함수를 호출)
         GraphicsPath path;
         CreateRoundedRectPath(&path, hoverRectF, cornerRadius);
 

@@ -15,6 +15,7 @@
 
 #include <shellapi.h>       // APPBARDATA, SHAppBarMessage 등을 위해 필수
 #include <windowsx.h>       // GET_X_LPARAM, GET_Y_LPARAM 매크로 사용
+#include <memory>           // [추가] std::unique_ptr 사용을 위해 포함
 
 // --- [GDI+ 설정] ---
 #include <Objidl.h>          // IStream 등을 위해 GDI+보다 먼저 포함
@@ -33,15 +34,26 @@ static HINSTANCE g_hInstTaskbar;
 // --- [수정: TASKBAR_DATA 구조체] ---
 struct TASKBAR_DATA
 {
-    Gdiplus::Image* imgBackground;
-    Gdiplus::Image* imgStart;
+    std::unique_ptr<Gdiplus::Image> imgBackground;
+    std::unique_ptr<Gdiplus::Image> imgStart;
 
     // 상태 관리 변수
-    BOOL bStartHover;       // 마우스가 시작 버튼 위에 있는지 여부
-    BOOL bMouseTracking;    // WM_MOUSELEAVE 이벤트를 추적 중인지 여부
-    BOOL bStartActive;      // 시작 버튼이 활성화(클릭)되었는지 여부
+    BOOL bStartHover;
+    BOOL bMouseTracking;
+    BOOL bStartActive;
 
-    HWND hStartMenu;        // 생성된 시작 메뉴 윈도우 핸들
+    HWND hStartMenu;
+
+    // [추가] 생성자를 정의하여 모든 멤버를 즉시 초기화합니다.
+    TASKBAR_DATA() :
+        imgBackground(nullptr),
+        imgStart(nullptr),
+        bStartHover(FALSE),
+        bMouseTracking(FALSE),
+        bStartActive(FALSE),
+        hStartMenu(NULL)
+    {
+    }
 };
 // --- [수정 끝] ---
 
@@ -73,18 +85,15 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
 
     // --- [새 핸들러: 포커스 모델용] ---
-    // (StartMenu가 WM_KILLFOCUS, ESC, 아이템 클릭 등으로 닫힐 때 이 메시지를 보냄)
     if (message == WM_APP_MENU_CLOSED)
     {
-        if (pData && pData->bStartActive) // 1. 활성 상태일 때만 처리
+        if (pData && pData->bStartActive)
         {
-            pData->bStartActive = FALSE; // 2. 활성 상태 해제
+            pData->bStartActive = FALSE;
 
-            // 3. (구 WM_CAPTURECHANGED 로직과 동일)
-            //    메뉴가 닫힌 시점의 마우스가 버튼 위에 있는지 확인하여 호버 상태 갱신
             POINT ptCursor;
-            GetCursorPos(&ptCursor);        // 화면(Screen) 좌표
-            ScreenToClient(hWnd, &ptCursor); // 작업표시줄(Client) 좌표로 변환
+            GetCursorPos(&ptCursor);
+            ScreenToClient(hWnd, &ptCursor);
 
             RECT rcButton;
             GetStartButtonRect(hWnd, &rcButton);
@@ -92,13 +101,12 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             BOOL bIsOverButton = PtInRect(&rcButton, ptCursor);
             if (bIsOverButton != pData->bStartHover)
             {
-                pData->bStartHover = bIsOverButton; // 호버 상태 갱신
+                pData->bStartHover = bIsOverButton;
             }
 
-            // 4. 최종 상태로 버튼 다시 그리기
             InvalidateRect(hWnd, &rcButton, FALSE);
         }
-        return 0; // 메시지 처리 완료
+        return 0;
     }
     // --- [새 핸들러 끝] ---
 
@@ -129,7 +137,7 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
     break;
 
-    case WM_PAINT: // (수정 없음)
+    case WM_PAINT:
     {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hWnd, &ps);
@@ -142,10 +150,9 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         Bitmap memBitmap(clientWidth, clientHeight);
         Graphics* memGfx = Graphics::FromImage(&memBitmap);
 
-        // 배경 그리기
         if (pData && pData->imgBackground)
         {
-            TextureBrush tBrush(pData->imgBackground);
+            TextureBrush tBrush(pData->imgBackground.get());
             memGfx->FillRectangle(&tBrush, 0, 0, clientWidth, clientHeight);
         }
         else
@@ -156,11 +163,10 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             memGfx->FillRectangle(&fallbackBrush, 0, 0, clientWidth, clientHeight);
         }
 
-        // 시작 버튼 그리기
         if (pData && pData->imgStart)
         {
             BOOL bShowHighlight = (pData->bStartHover || pData->bStartActive);
-            StartButton_Paint(memGfx, rcClient, pData->imgStart, bShowHighlight);
+            StartButton_Paint(memGfx, rcClient, pData->imgStart.get(), bShowHighlight);
         }
 
         Graphics screenGfx(hdc);
@@ -172,7 +178,6 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
     }
     break;
 
-    // --- [마우스 추적 로직 (수정 없음)] ---
     case WM_MOUSEMOVE:
     {
         if (pData)
@@ -224,10 +229,7 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         }
         return 0;
     }
-    // --- [마우스 추적 끝] ---
 
-
-    // --- [수정: SetCapture 로직 완전 제거. 포커스 모델로 변경] ---
 
     case WM_LBUTTONDOWN:
     {
@@ -237,40 +239,34 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
             RECT rcButton;
             GetStartButtonRect(hWnd, &rcButton);
 
-            if (PtInRect(&rcButton, pt)) // 1. 버튼 영역 안에서 클릭
+            if (PtInRect(&rcButton, pt))
             {
-                // 상태 토글
                 pData->bStartActive = !pData->bStartActive;
 
                 if (pData->bStartActive)
                 {
-                    // 활성: 메뉴 표시 (메뉴가 스스로 SetFocus 함)
                     StartMenu_Show(pData->hStartMenu, hWnd);
                 }
                 else
                 {
-                    // 비활성 (버튼 다시 클릭): 메뉴 숨기기
                     StartMenu_Hide(pData->hStartMenu);
                 }
 
-                InvalidateRect(hWnd, &rcButton, FALSE); // 버튼 즉시 다시 그리기
+                InvalidateRect(hWnd, &rcButton, FALSE);
             }
-            else // 2. 버튼 영역 밖 (작업표시줄 위)에서 클릭
+            else
             {
                 if (pData->bStartActive)
                 {
-                    // 메뉴가 활성화되어 있었다면, 비활성화하고 메뉴 숨기기
-                    // (StartMenu_Hide는 애니메이션만 실행, 닫히면 메뉴가 WM_KILLFOCUS를 받고 WM_APP_MENU_CLOSED를 보냄)
                     pData->bStartActive = FALSE;
                     StartMenu_Hide(pData->hStartMenu);
-                    InvalidateRect(hWnd, &rcButton, FALSE); // 버튼 상태 즉시 복원
+                    InvalidateRect(hWnd, &rcButton, FALSE);
                 }
             }
         }
         break;
     }
 
-    // [수정] 작업표시줄 우클릭 시에도 메뉴가 열려있다면 닫기
     case WM_RBUTTONDOWN:
     {
         if (pData && pData->bStartActive)
@@ -285,12 +281,6 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         break;
     }
 
-    // [제거] WM_KEYDOWN (ESC) 핸들러는 SetCapture를 안쓰므로 제거 (StartMenu가 직접 처리)
-
-    // [제거] WM_CAPTURECHANGED 핸들러는 WM_APP_MENU_CLOSED로 대체되었으므로 삭제
-
-    // --- [수정 끝] ---
-
 
     case WM_DESTROY:
     {
@@ -299,14 +289,12 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
         abd.hWnd = hWnd;
         SHAppBarMessage(ABM_REMOVE, &abd);
 
-        // [추가] Taskbar가 종료될 때 자식(소유된) 시작 메뉴 창도 파괴
-        if (pData && pData->hStartMenu)
-        {
-            DestroyWindow(pData->hStartMenu);
-        }
-
         if (pData)
         {
+            if (pData->hStartMenu)
+            {
+                DestroyWindow(pData->hStartMenu);
+            }
             delete pData;
         }
         SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)NULL);
@@ -322,7 +310,7 @@ LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM 
 
 
 /**
- * @brief 작업표시줄(AppBar)의 윈도우 클래스를 시스템에 등록합니다. (수정 없음)
+ * @brief 작업표시줄(AppBar)의 윈도우 클래스를 시스템에 등록합니다.
  */
 ATOM Taskbar_Register(HINSTANCE hInstance, const WCHAR* szWindowClass)
 {
@@ -349,18 +337,24 @@ ATOM Taskbar_Register(HINSTANCE hInstance, const WCHAR* szWindowClass)
  */
 BOOL Taskbar_Create(HINSTANCE hInst, int nCmdShow,
     const WCHAR* szTitle, const WCHAR* szWindowClass,
-    Gdiplus::Image* bg, Gdiplus::Image* start)
+    std::unique_ptr<Gdiplus::Image> bg, std::unique_ptr<Gdiplus::Image> start)
 {
     g_hInstTaskbar = hInst;
 
-    // --- [수정: 상태 변수 초기화] ---
+    // --- [수정: RAII 및 생성자 활용] ---
+    // 1. new TASKBAR_DATA()를 호출하면 새로 정의한 생성자가 모든 멤버를 초기화합니다.
     TASKBAR_DATA* pData = new TASKBAR_DATA();
-    pData->imgBackground = bg;
-    pData->imgStart = start;
-    pData->bStartHover = FALSE;
-    pData->bMouseTracking = FALSE;
-    pData->bStartActive = FALSE;
-    pData->hStartMenu = NULL;        // [수정 없음]
+    if (!pData) return FALSE;
+
+    // 2. unique_ptr의 소유권을 pData의 멤버로 이동(move)
+    pData->imgBackground = std::move(bg);
+    pData->imgStart = std::move(start);
+
+    // 3. [제거] 수동 초기화 코드가 더 이상 필요 없습니다.
+    // pData->bStartHover = FALSE;
+    // pData->bMouseTracking = FALSE;
+    // pData->bStartActive = FALSE;
+    // pData->hStartMenu = NULL;
     // --- [수정 끝] ---
 
     int barHeight = 48;
@@ -386,15 +380,12 @@ BOOL Taskbar_Create(HINSTANCE hInst, int nCmdShow,
         return FALSE;
     }
 
-    // --- [추가: 시작 메뉴 창 생성] ---
     pData->hStartMenu = StartMenu_Create(hInst, hWnd);
     if (!pData->hStartMenu)
     {
         DestroyWindow(hWnd);
         return FALSE;
     }
-    // --- [추가 끝] ---
-
 
     APPBARDATA abd = {};
     abd.cbSize = sizeof(APPBARDATA);
@@ -402,6 +393,7 @@ BOOL Taskbar_Create(HINSTANCE hInst, int nCmdShow,
 
     if (!SHAppBarMessage(ABM_NEW, &abd))
     {
+        DestroyWindow(hWnd);
         return FALSE;
     }
 

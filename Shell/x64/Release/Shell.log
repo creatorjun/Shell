@@ -1,6 +1,16 @@
 ﻿  StartMenu.cpp
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um\GdiplusTypes.h(102,7): warning C4099: 'Gdiplus::RectF': 처음에는 'struct'을(를) 사용하여 형식 이름을 표시했는데 이제는 'class'을(를) 사용하여 표시합니다.
+  (소스 파일 'StartMenu.cpp'을(를) 컴파일하는 중)
+      D:\kdic\Desktop\Source\Shell\Shell\GraphicsUtil.h(9,12):
+      'Gdiplus::RectF' 선언을 참조하십시오.
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um\GdiplusTypes.h(355,7): warning C4099: 'Gdiplus::RectF': 처음에는 'struct'을(를) 사용하여 형식 이름을 표시했는데 이제는 'class'을(를) 사용하여 표시합니다.
+  (소스 파일 'StartMenu.cpp'을(를) 컴파일하는 중)
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um\GdiplusTypes.h(355,7):
+      'Gdiplus::RectF' 선언을 참조하십시오.
+  
   코드를 생성하고 있습니다.
-  1 of 274 functions ( 0.4%) were compiled, the rest were copied from previous compilation.
+  3 of 297 functions ( 1.0%) were compiled, the rest were copied from previous compilation.
     0 functions were new in current compilation
     1 functions had inline decision re-evaluated but remain unchanged
   코드를 생성했습니다.

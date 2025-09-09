@@ -1,7 +1,6 @@
 // creatorjun/shell/Shell-04869ccf080a38ea887a3d00139afecc32776daa/Shell/StartButton.h
 
 #pragma once
-#pragma once
 #include <windows.h> // RECT 타입을 사용하기 위해 포함
 
 // GDI+ 클래스 전방 선언
