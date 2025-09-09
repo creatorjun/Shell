@@ -152,28 +152,30 @@ LRESULT CALLBACK StartMenu_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARA
         // 헬퍼 람다: HICON을 로드하고 GDI+ Bitmap으로 변환한 뒤 HICON을 파괴합니다.
         auto LoadAndConvertIcon = [](int iconIndex) -> std::unique_ptr<Bitmap> {
 
-            // LoadShellIcon이 (256, 256)을 요청하여 고해상도 HICON을 반환합니다.
-            HICON hIcon = LoadShellIcon(iconIndex, 256);
+            // --- [선명도 수정] ---
+            // 256px 대신 32px 아이콘을 직접 요청합니다.
+            // 이렇게 하면 리사이징(보간)이 발생하지 않아 가장 선명합니다.
+            HICON hIcon = LoadShellIcon(iconIndex, 32); // <--- [수정됨] 256에서 32로 변경
 
             if (!hIcon) return nullptr;
 
             std::unique_ptr<Bitmap> bmp(Bitmap::FromHICON(hIcon));
             DestroyIcon(hIcon);
 
-            return bmp; // 고해상도 비트맵의 unique_ptr 반환
+            return bmp; // 32x32 비트맵의 unique_ptr 반환
             };
 
         g_menuItems.push_back({
             L"파일 탐색기",
             L"explorer.exe",
-            LoadAndConvertIcon(1),
+            LoadAndConvertIcon(3),
             {0}
             });
 
         g_menuItems.push_back({
             L"터미널",
             L"wt.exe",
-            LoadAndConvertIcon(261),
+            LoadAndConvertIcon(255),
             {0}
             });
 
@@ -224,9 +226,9 @@ LRESULT CALLBACK StartMenu_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARA
         memGfx.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
         // --- [아이콘 선명도 수정] ---
-        // Bicubic은 사진에 적합하며 UI 아이콘을 흐릿하게 만듭니다.
-        // Bilinear 모드가 아이콘 축소 시 더 선명한(Crisp) 경계선을 제공합니다.
-        memGfx.SetInterpolationMode(InterpolationModeHighQualityBilinear);
+        // (이제 32x32 아이콘을 직접 로드하므로 보간 모드 설정은 
+        //  사실상 드로잉 품질에 영향을 주지 않지만, 최고 품질로 유지합니다.)
+        memGfx.SetInterpolationMode(InterpolationModeHighQualityBicubic);
         // --- [수정 끝] ---
 
         memGfx.SetSmoothingMode(SmoothingModeAntiAlias);
@@ -276,7 +278,7 @@ LRESULT CALLBACK StartMenu_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARA
 
             if (g_menuItems[i].iconBitmap)
             {
-                // 고해상도 비트맵을 32x32 크기로 '축소'하여 그립니다.
+                // 이제 32x32 비트맵을 32x32 크기로 '그대로' 그립니다. (1:1 매칭)
                 memGfx.DrawImage(
                     g_menuItems[i].iconBitmap.get(),
                     iconX,
