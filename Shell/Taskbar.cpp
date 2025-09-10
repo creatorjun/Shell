@@ -187,10 +187,9 @@ namespace
 
     LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
-        TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
-
         if (message == WM_APP_MENU_CLOSED)
         {
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData && pData->bStartActive)
             {
                 pData->bStartActive = FALSE;
@@ -211,8 +210,8 @@ namespace
         case WM_CREATE:
         {
             CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
-            SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pCreate->lpCreateParams);
-            pData = (TASKBAR_DATA*)pCreate->lpCreateParams;
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)pCreate->lpCreateParams;
+            SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pData);
 
             if (GRADIENT_EFFECT_ENABLED && pData)
             {
@@ -226,6 +225,7 @@ namespace
         {
             if (wParam == SPI_SETDESKWALLPAPER)
             {
+                TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
                 if (GRADIENT_EFFECT_ENABLED && pData)
                 {
                     auto colors = GetWallpaperGradientColors();
@@ -254,6 +254,7 @@ namespace
         }
         case WM_PAINT:
         {
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hWnd, &ps);
             RECT rcClient;
@@ -304,6 +305,7 @@ namespace
         }
         case WM_MOUSEMOVE:
         {
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData)
             {
                 if (!pData->bMouseTracking)
@@ -327,6 +329,7 @@ namespace
         }
         case WM_MOUSELEAVE:
         {
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData)
             {
                 pData->bMouseTracking = FALSE;
@@ -345,6 +348,7 @@ namespace
         }
         case WM_LBUTTONDOWN:
         {
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData && pData->hStartMenu)
             {
                 POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -371,6 +375,7 @@ namespace
         }
         case WM_RBUTTONDOWN:
         {
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData && pData->bStartActive)
             {
                 pData->bStartActive = FALSE;
@@ -387,6 +392,8 @@ namespace
             abd.cbSize = sizeof(APPBARDATA);
             abd.hWnd = hWnd;
             SHAppBarMessage(ABM_REMOVE, &abd);
+
+            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData)
             {
                 if (pData->hStartMenu) DestroyWindow(pData->hStartMenu);
