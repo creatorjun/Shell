@@ -16,5 +16,5 @@ public:
     static ATOM Register(HINSTANCE hInstance, const WCHAR* szWindowClass);
     static BOOL Create(HINSTANCE hInst, int nCmdShow,
         const WCHAR* szTitle, const WCHAR* szWindowClass,
-        std::unique_ptr<Gdiplus::Image> bg, std::unique_ptr<Gdiplus::Image> start);
+        std::unique_ptr<Gdiplus::Image> start);
 };

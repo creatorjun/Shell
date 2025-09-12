@@ -7,6 +7,7 @@
 #include "framework.h"
 #include "Desktop.h" // 이 모듈의 헤더
 #include "Resource.h"
+#include <stdio.h> // [추가] swprintf_s 함수를 사용하기 위해 추가
 
 // --- [GDI+ 설정] ---
 #include <Objidl.h>          // IStream 등을 위해 GDI+보다 먼저 포함

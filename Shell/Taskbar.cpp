@@ -15,8 +15,6 @@
 #include <shellapi.h>
 #include <windowsx.h>
 #include <memory>
-#include <utility> // std::pair
-#include <algorithm> // std::min, std::max
 
 // --- [GDI+ 설정] ---
 #include <Objidl.h>
@@ -28,22 +26,10 @@ INT_PTR CALLBACK About(HWND, UINT, WPARAM, LPARAM);
 
 namespace
 {
-
-    // --- [아크릴 효과 API 정의] ---
-    enum ACCENT_STATE { ACCENT_DISABLED = 0, ACCENT_ENABLE_ACRYLICBLURBEHIND = 4 };
-    struct ACCENT_POLICY { ACCENT_STATE AccentState; DWORD AccentFlags; DWORD GradientColor; DWORD AnimationId; };
-    struct WINDOWCOMPOSITIONATTRIBDATA { int Attrib; PVOID pvData; SIZE_T cbData; };
-    using pSetWindowCompositionAttribute = BOOL(WINAPI*)(HWND, WINDOWCOMPOSITIONATTRIBDATA*);
-
     // --- [내부 데이터 구조체] ---
     struct TASKBAR_DATA
     {
-        std::unique_ptr<Gdiplus::Image> imgBackground;
         std::unique_ptr<Gdiplus::Image> imgStart;
-        std::unique_ptr<Gdiplus::TextureBrush> brushBackground;
-
-        Gdiplus::Color gradientColorLeft;
-        Gdiplus::Color gradientColorRight;
 
         BOOL bStartHover;
         BOOL bMouseTracking;
@@ -51,11 +37,7 @@ namespace
         HWND hStartMenu;
 
         TASKBAR_DATA() :
-            imgBackground(nullptr),
             imgStart(nullptr),
-            brushBackground(nullptr),
-            gradientColorLeft(ACRYLIC_EFFECT_ALPHA, ACRYLIC_EFFECT_RED, ACRYLIC_EFFECT_GREEN, ACRYLIC_EFFECT_BLUE),
-            gradientColorRight(ACRYLIC_EFFECT_ALPHA, ACRYLIC_EFFECT_RED, ACRYLIC_EFFECT_GREEN, ACRYLIC_EFFECT_BLUE),
             bStartHover(FALSE),
             bMouseTracking(FALSE),
             bStartActive(FALSE),
@@ -67,112 +49,6 @@ namespace
     static HINSTANCE g_hInstTaskbar;
 
     // --- [내부 헬퍼 함수] ---
-    float HueToRgb(float p, float q, float t)
-    {
-        if (t < 0.0f) t += 1.0f;
-        if (t > 1.0f) t -= 1.0f;
-        if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
-        if (t < 1.0f / 2.0f) return q;
-        if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
-        return p;
-    }
-
-    void HslToRgb(float h, float s, float l, BYTE* r, BYTE* g, BYTE* b)
-    {
-        if (s == 0.0f) {
-            *r = *g = *b = static_cast<BYTE>(l * 255);
-        }
-        else {
-            float q = l < 0.5f ? l * (1.0f + s) : l + s - l * s;
-            float p = 2.0f * l - q;
-            *r = static_cast<BYTE>(HueToRgb(p, q, h + 1.0f / 3.0f) * 255);
-            *g = static_cast<BYTE>(HueToRgb(p, q, h) * 255);
-            *b = static_cast<BYTE>(HueToRgb(p, q, h - 1.0f / 3.0f) * 255);
-        }
-    }
-
-    void RgbToHsl(BYTE r, BYTE g, BYTE b, float* h, float* s, float* l)
-    {
-        float rf = r / 255.0f;
-        float gf = g / 255.0f;
-        float bf = b / 255.0f;
-        float maxVal = std::max({ rf, gf, bf });
-        float minVal = std::min({ rf, gf, bf });
-        *h = *s = 0;
-        *l = (maxVal + minVal) / 2.0f;
-        if (maxVal != minVal) {
-            float d = maxVal - minVal;
-            *s = *l > 0.5f ? d / (2.0f - maxVal - minVal) : d / (maxVal + minVal);
-            if (maxVal == rf) *h = (gf - bf) / d + (gf < bf ? 6.0f : 0.0f);
-            else if (maxVal == gf) *h = (bf - rf) / d + 2.0f;
-            else *h = (rf - gf) / d + 4.0f;
-            *h /= 6.0f;
-        }
-    }
-
-    void EnableAcrylicEffect(HWND hWnd, Gdiplus::Color color)
-    {
-        HMODULE hUser32 = GetModuleHandle(L"user32.dll");
-        if (hUser32)
-        {
-            pSetWindowCompositionAttribute SetWindowCompositionAttribute =
-                (pSetWindowCompositionAttribute)GetProcAddress(hUser32, "SetWindowCompositionAttribute");
-            if (SetWindowCompositionAttribute)
-            {
-                DWORD gradientColor = (color.GetA() << 24) | (color.GetB() << 16) | (color.GetG() << 8) | (color.GetR());
-                ACCENT_POLICY accent = { ACCENT_ENABLE_ACRYLICBLURBEHIND, 0, gradientColor, 0 };
-                WINDOWCOMPOSITIONATTRIBDATA data = { 19, &accent, sizeof(accent) };
-                SetWindowCompositionAttribute(hWnd, &data);
-            }
-        }
-    }
-
-    std::pair<Gdiplus::Color, Gdiplus::Color> GetWallpaperGradientColors()
-    {
-        WCHAR wallpaperPath[MAX_PATH];
-        Color defaultColor(ACRYLIC_EFFECT_ALPHA, ACRYLIC_EFFECT_RED, ACRYLIC_EFFECT_GREEN, ACRYLIC_EFFECT_BLUE);
-
-        if (SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaperPath, 0))
-        {
-            std::unique_ptr<Bitmap> wallpaperBitmap(Bitmap::FromFile(wallpaperPath));
-            if (wallpaperBitmap && wallpaperBitmap->GetLastStatus() == Ok)
-            {
-                UINT width = wallpaperBitmap->GetWidth();
-                UINT height = wallpaperBitmap->GetHeight();
-                Rect rectLeft(0, height - 10, 1, 10);
-                Rect rectRight(width - 1, height - 10, 1, 10);
-
-                Bitmap bmpLeft(1, 1);
-                Graphics gLeft(&bmpLeft);
-                gLeft.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-                gLeft.DrawImage(wallpaperBitmap.get(), Rect(0, 0, 1, 1), rectLeft.X, rectLeft.Y, rectLeft.Width, rectLeft.Height, UnitPixel);
-
-                Bitmap bmpRight(1, 1);
-                Graphics gRight(&bmpRight);
-                gRight.SetInterpolationMode(InterpolationModeHighQualityBicubic);
-                gRight.DrawImage(wallpaperBitmap.get(), Rect(0, 0, 1, 1), rectRight.X, rectRight.Y, rectRight.Width, rectRight.Height, UnitPixel);
-
-                Color colorLeft, colorRight;
-                bmpLeft.GetPixel(0, 0, &colorLeft);
-                bmpRight.GetPixel(0, 0, &colorRight);
-
-                float h, s, l;
-                RgbToHsl(colorLeft.GetR(), colorLeft.GetG(), colorLeft.GetB(), &h, &s, &l);
-                l = std::max(0.20f, l); s = std::max(0.10f, s);
-                BYTE rL, gL, bL;
-                HslToRgb(h, s, l, &rL, &gL, &bL);
-
-                RgbToHsl(colorRight.GetR(), colorRight.GetG(), colorRight.GetB(), &h, &s, &l);
-                l = std::max(0.20f, l); s = std::max(0.10f, s);
-                BYTE rR, gR, bR;
-                HslToRgb(h, s, l, &rR, &gR, &bR);
-
-                return { Color(ACRYLIC_EFFECT_ALPHA, rL, gL, bL), Color(ACRYLIC_EFFECT_ALPHA, rR, gR, bR) };
-            }
-        }
-        return { defaultColor, defaultColor };
-    }
-
     void GetStartButtonRect(HWND hWnd, RECT* pButtonRect)
     {
         if (!pButtonRect) return;
@@ -184,6 +60,81 @@ namespace
         int hoverY = (clientHeight - START_BUTTON_HOVER_SIZE) / 2;
         SetRect(pButtonRect, hoverX, hoverY, hoverX + START_BUTTON_HOVER_SIZE, hoverY + START_BUTTON_HOVER_SIZE);
     }
+
+    // [수정] GDI+를 사용하여 작업 표시줄의 모양을 그리고 UpdateLayeredWindow로 업데이트하는 함수
+    // WndProc보다 먼저 정의하여 별도의 전방 선언이 필요 없도록 위치를 조정합니다.
+    void UpdateTaskbarAppearance(HWND hWnd)
+    {
+        TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+        if (!pData) return;
+
+        RECT rcClient;
+        GetClientRect(hWnd, &rcClient);
+        int clientWidth = rcClient.right - rcClient.left;
+        int clientHeight = rcClient.bottom - rcClient.top;
+
+        HDC hdcScreen = GetDC(hWnd);
+        if (!hdcScreen) return;
+
+        HDC hdcMem = CreateCompatibleDC(hdcScreen);
+        if (!hdcMem)
+        {
+            ReleaseDC(hWnd, hdcScreen);
+            return;
+        }
+
+        BITMAPINFO bmi = { 0 };
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = clientWidth;
+        bmi.bmiHeader.biHeight = -clientHeight; // Top-down DIB
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        void* pvBits;
+        HBITMAP hBitmap = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &pvBits, NULL, 0);
+
+        if (!hBitmap)
+        {
+            DeleteDC(hdcMem);
+            ReleaseDC(hWnd, hdcScreen);
+            return;
+        }
+
+        HGDIOBJ hOldBitmap = SelectObject(hdcMem, hBitmap);
+
+        Graphics graphics(hdcMem);
+        graphics.SetSmoothingMode(SmoothingModeAntiAlias);
+        graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+
+        SolidBrush solidBrush(Color(128, 0, 0, 0));
+        graphics.FillRectangle(&solidBrush, 0, 0, clientWidth, clientHeight);
+
+        Pen highlightPen(Color(80, 255, 255, 255), 1);
+        Pen shadowPen(Color(80, 0, 0, 0), 1);
+        graphics.DrawLine(&highlightPen, 0, 0, clientWidth, 0);
+        graphics.DrawLine(&shadowPen, 0, clientHeight - 1, clientWidth, clientHeight - 1);
+
+        if (pData->imgStart)
+        {
+            BOOL bShowHighlight = (pData->bStartHover || pData->bStartActive);
+            StartButton_Paint(&graphics, rcClient, pData->imgStart.get(), bShowHighlight);
+        }
+
+        POINT ptSrc = { 0, 0 };
+        SIZE sizeWindow = { clientWidth, clientHeight };
+        BLENDFUNCTION blend = { 0 };
+        blend.BlendOp = AC_SRC_OVER;
+        blend.SourceConstantAlpha = 255;
+        blend.AlphaFormat = AC_SRC_ALPHA;
+
+        UpdateLayeredWindow(hWnd, hdcScreen, NULL, &sizeWindow, hdcMem, &ptSrc, 0, &blend, ULW_ALPHA);
+
+        SelectObject(hdcMem, hOldBitmap);
+        DeleteObject(hBitmap);
+        DeleteDC(hdcMem);
+        ReleaseDC(hWnd, hdcScreen);
+    }
+
 
     LRESULT CALLBACK Taskbar_WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     {
@@ -200,7 +151,7 @@ namespace
                 GetStartButtonRect(hWnd, &rcButton);
                 BOOL bIsOverButton = PtInRect(&rcButton, ptCursor);
                 if (bIsOverButton != pData->bStartHover) pData->bStartHover = bIsOverButton;
-                InvalidateRect(hWnd, &rcButton, FALSE);
+                UpdateTaskbarAppearance(hWnd);
             }
             return 0;
         }
@@ -212,28 +163,6 @@ namespace
             CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
             TASKBAR_DATA* pData = (TASKBAR_DATA*)pCreate->lpCreateParams;
             SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pData);
-
-            if (GRADIENT_EFFECT_ENABLED && pData)
-            {
-                auto colors = GetWallpaperGradientColors();
-                pData->gradientColorLeft = colors.first;
-                pData->gradientColorRight = colors.second;
-            }
-            break;
-        }
-        case WM_SETTINGCHANGE:
-        {
-            if (wParam == SPI_SETDESKWALLPAPER)
-            {
-                TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
-                if (GRADIENT_EFFECT_ENABLED && pData)
-                {
-                    auto colors = GetWallpaperGradientColors();
-                    pData->gradientColorLeft = colors.first;
-                    pData->gradientColorRight = colors.second;
-                    InvalidateRect(hWnd, NULL, TRUE);
-                }
-            }
             break;
         }
         case WM_COMMAND:
@@ -254,53 +183,8 @@ namespace
         }
         case WM_PAINT:
         {
-            TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
-            PAINTSTRUCT ps;
-            HDC hdc = BeginPaint(hWnd, &ps);
-            RECT rcClient;
-            GetClientRect(hWnd, &rcClient);
-            int clientWidth = rcClient.right - rcClient.left;
-            int clientHeight = rcClient.bottom - rcClient.top;
-
-            Bitmap memBitmap(clientWidth, clientHeight);
-            Graphics* memGfx = Graphics::FromImage(&memBitmap);
-
-            if (GRADIENT_EFFECT_ENABLED && pData)
-            {
-                Color opaqueLeft(255, pData->gradientColorLeft.GetR(), pData->gradientColorLeft.GetG(), pData->gradientColorLeft.GetB());
-                Color opaqueRight(255, pData->gradientColorRight.GetR(), pData->gradientColorRight.GetG(), pData->gradientColorRight.GetB());
-
-                LinearGradientBrush gradBrush(
-                    Point(0, 0), Point(clientWidth, 0),
-                    opaqueLeft, opaqueRight);
-                memGfx->FillRectangle(&gradBrush, 0, 0, clientWidth, clientHeight);
-
-                // [추가] 엠보싱 효과를 위한 하이라이트 및 그림자
-                Pen highlightPen(Color(80, 255, 255, 255), 1);
-                Pen shadowPen(Color(80, 0, 0, 0), 1);
-                memGfx->DrawLine(&highlightPen, 0, 0, clientWidth, 0);
-                memGfx->DrawLine(&shadowPen, 0, clientHeight - 1, clientWidth, clientHeight - 1);
-            }
-            else if (pData && pData->brushBackground)
-            {
-                memGfx->FillRectangle(pData->brushBackground.get(), 0, 0, clientWidth, clientHeight);
-            }
-            else
-            {
-                SolidBrush fallbackBrush(Color(255, 0, 0, 0));
-                memGfx->FillRectangle(&fallbackBrush, 0, 0, clientWidth, clientHeight);
-            }
-
-            if (pData && pData->imgStart)
-            {
-                BOOL bShowHighlight = (pData->bStartHover || pData->bStartActive);
-                StartButton_Paint(memGfx, rcClient, pData->imgStart.get(), bShowHighlight);
-            }
-
-            Graphics screenGfx(hdc);
-            screenGfx.DrawImage(&memBitmap, 0, 0);
-            delete memGfx;
-            EndPaint(hWnd, &ps);
+            UpdateTaskbarAppearance(hWnd);
+            ValidateRect(hWnd, NULL);
             break;
         }
         case WM_MOUSEMOVE:
@@ -322,7 +206,7 @@ namespace
                 if (bIsOverButton != pData->bStartHover)
                 {
                     pData->bStartHover = bIsOverButton;
-                    if (!pData->bStartActive) InvalidateRect(hWnd, &rcButton, FALSE);
+                    if (!pData->bStartActive) UpdateTaskbarAppearance(hWnd);
                 }
             }
             break;
@@ -338,9 +222,7 @@ namespace
                     pData->bStartHover = FALSE;
                     if (!pData->bStartActive)
                     {
-                        RECT rcButton;
-                        GetStartButtonRect(hWnd, &rcButton);
-                        InvalidateRect(hWnd, &rcButton, FALSE);
+                        UpdateTaskbarAppearance(hWnd);
                     }
                 }
             }
@@ -359,7 +241,7 @@ namespace
                     pData->bStartActive = !pData->bStartActive;
                     if (pData->bStartActive) StartMenu::Show(pData->hStartMenu, hWnd);
                     else StartMenu::Hide(pData->hStartMenu);
-                    InvalidateRect(hWnd, &rcButton, FALSE);
+                    UpdateTaskbarAppearance(hWnd);
                 }
                 else
                 {
@@ -367,7 +249,7 @@ namespace
                     {
                         pData->bStartActive = FALSE;
                         StartMenu::Hide(pData->hStartMenu);
-                        InvalidateRect(hWnd, &rcButton, FALSE);
+                        UpdateTaskbarAppearance(hWnd);
                     }
                 }
             }
@@ -380,9 +262,7 @@ namespace
             {
                 pData->bStartActive = FALSE;
                 StartMenu::Hide(pData->hStartMenu);
-                RECT rcButton;
-                GetStartButtonRect(hWnd, &rcButton);
-                InvalidateRect(hWnd, &rcButton, FALSE);
+                UpdateTaskbarAppearance(hWnd);
             }
             break;
         }
@@ -431,23 +311,19 @@ ATOM Taskbar::Register(HINSTANCE hInstance, const WCHAR* szWindowClass)
 
 BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
     const WCHAR* szTitle, const WCHAR* szWindowClass,
-    std::unique_ptr<Gdiplus::Image> bg, std::unique_ptr<Gdiplus::Image> start)
+    std::unique_ptr<Gdiplus::Image> start)
 {
     g_hInstTaskbar = hInst;
     TASKBAR_DATA* pData = new TASKBAR_DATA();
     if (!pData) return FALSE;
 
-    pData->imgBackground = std::move(bg);
     pData->imgStart = std::move(start);
-    if (pData->imgBackground)
-    {
-        pData->brushBackground = std::make_unique<TextureBrush>(pData->imgBackground.get());
-    }
 
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
     HWND hWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW, szWindowClass, szTitle, WS_POPUP,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        szWindowClass, szTitle, WS_POPUP,
         0, 0, screenWidth, TASKBAR_HEIGHT,
         nullptr, nullptr, hInst, (LPVOID)pData
     );
@@ -481,6 +357,7 @@ BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
     SHAppBarMessage(ABM_QUERYPOS, &abd);
     MoveWindow(hWnd, abd.rc.left, abd.rc.top, abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top, TRUE);
     ShowWindow(hWnd, nCmdShow);
-    UpdateWindow(hWnd);
+    UpdateTaskbarAppearance(hWnd);
+
     return TRUE;
 }

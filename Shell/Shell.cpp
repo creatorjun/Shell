@@ -121,7 +121,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // --- [초기화 끝] ---
 
 
-    std::unique_ptr<Image> imgTaskbarBg(Image::FromFile(L"Background.jpg"));
+    // [수정] 작업 표시줄 배경 이미지 로딩 제거
     std::unique_ptr<Image> imgStart(Image::FromFile(L"Start.png"));
     std::unique_ptr<Image> imgDesktopBg(Image::FromFile(L"Background.jpg"));
 
@@ -138,8 +138,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     StartMenu::Register(hInstance);
 
 
-    if (!Taskbar::Create(hInstance, nCmdShow, szTitle, szWindowClass,
-        std::move(imgTaskbarBg), std::move(imgStart)))
+    // [수정] Taskbar::Create 호출에서 배경 이미지 인자 제거
+    if (!Taskbar::Create(hInstance, nCmdShow, szTitle, szWindowClass, std::move(imgStart)))
     {
         GdiplusShutdown(gdiplusToken);
         return FALSE;
