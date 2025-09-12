@@ -61,8 +61,6 @@ namespace
         SetRect(pButtonRect, hoverX, hoverY, hoverX + START_BUTTON_HOVER_SIZE, hoverY + START_BUTTON_HOVER_SIZE);
     }
 
-    // [수정] GDI+를 사용하여 작업 표시줄의 모양을 그리고 UpdateLayeredWindow로 업데이트하는 함수
-    // WndProc보다 먼저 정의하여 별도의 전방 선언이 필요 없도록 위치를 조정합니다.
     void UpdateTaskbarAppearance(HWND hWnd)
     {
         TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
@@ -268,11 +266,7 @@ namespace
         }
         case WM_DESTROY:
         {
-            APPBARDATA abd = {};
-            abd.cbSize = sizeof(APPBARDATA);
-            abd.hWnd = hWnd;
-            SHAppBarMessage(ABM_REMOVE, &abd);
-
+            // [수정] SHAppBarMessage 호출 제거
             TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData)
             {
@@ -321,10 +315,14 @@ BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
 
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+
+    // [수정] 작업 표시줄의 Y 위치를 직접 계산합니다.
+    int taskbarY = screenHeight - TASKBAR_HEIGHT;
+
     HWND hWnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         szWindowClass, szTitle, WS_POPUP,
-        0, 0, screenWidth, TASKBAR_HEIGHT,
+        0, taskbarY, screenWidth, TASKBAR_HEIGHT, // [수정] 계산된 위치로 창 생성
         nullptr, nullptr, hInst, (LPVOID)pData
     );
     if (!hWnd)
@@ -340,22 +338,8 @@ BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
         return FALSE;
     }
 
-    APPBARDATA abd = {};
-    abd.cbSize = sizeof(APPBARDATA);
-    abd.hWnd = hWnd;
-    if (!SHAppBarMessage(ABM_NEW, &abd))
-    {
-        DestroyWindow(hWnd);
-        return FALSE;
-    }
+    // [수정] SHAppBarMessage 관련 코드 전체 제거
 
-    abd.uEdge = ABE_BOTTOM;
-    abd.rc.left = 0;
-    abd.rc.right = screenWidth;
-    abd.rc.top = screenHeight - TASKBAR_HEIGHT;
-    abd.rc.bottom = screenHeight;
-    SHAppBarMessage(ABM_QUERYPOS, &abd);
-    MoveWindow(hWnd, abd.rc.left, abd.rc.top, abd.rc.right - abd.rc.left, abd.rc.bottom - abd.rc.top, TRUE);
     ShowWindow(hWnd, nCmdShow);
     UpdateTaskbarAppearance(hWnd);
 
