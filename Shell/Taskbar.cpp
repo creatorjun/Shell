@@ -11,10 +11,12 @@
 #include "Shell.h"
 #include "Resource.h"
 #include "Constants.h"
+#include "Clock.h" // [추가] Clock 모듈 헤더 포함
 
 #include <shellapi.h>
 #include <windowsx.h>
 #include <memory>
+#include <string>
 
 // --- [GDI+ 설정] ---
 #include <Objidl.h>
@@ -36,6 +38,10 @@ namespace
         BOOL bStartActive;
         HWND hStartMenu;
 
+        // [수정] 시계 텍스트 버퍼만 남김
+        WCHAR szClock[64];
+
+
         TASKBAR_DATA() :
             imgStart(nullptr),
             bStartHover(FALSE),
@@ -43,10 +49,14 @@ namespace
             bStartActive(FALSE),
             hStartMenu(NULL)
         {
+            szClock[0] = L'\0';
         }
     };
 
     static HINSTANCE g_hInstTaskbar;
+
+    // 시계 업데이트 타이머 ID
+    const UINT_PTR IDT_CLOCK_TIMER = 1;
 
     // --- [내부 헬퍼 함수] ---
     void GetStartButtonRect(HWND hWnd, RECT* pButtonRect)
@@ -60,6 +70,8 @@ namespace
         int hoverY = (clientHeight - START_BUTTON_HOVER_SIZE) / 2;
         SetRect(pButtonRect, hoverX, hoverY, hoverX + START_BUTTON_HOVER_SIZE, hoverY + START_BUTTON_HOVER_SIZE);
     }
+
+    // [제거] UpdateClock 함수 제거
 
     void UpdateTaskbarAppearance(HWND hWnd)
     {
@@ -103,6 +115,7 @@ namespace
         Graphics graphics(hdcMem);
         graphics.SetSmoothingMode(SmoothingModeAntiAlias);
         graphics.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+        graphics.SetTextRenderingHint(TextRenderingHintClearTypeGridFit);
 
         SolidBrush solidBrush(Color(128, 0, 0, 0));
         graphics.FillRectangle(&solidBrush, 0, 0, clientWidth, clientHeight);
@@ -117,6 +130,9 @@ namespace
             BOOL bShowHighlight = (pData->bStartHover || pData->bStartActive);
             StartButton_Paint(&graphics, rcClient, pData->imgStart.get(), bShowHighlight);
         }
+
+        // [수정] Clock::Paint 함수 호출로 변경
+        Clock::Paint(&graphics, rcClient, pData->szClock);
 
         POINT ptSrc = { 0, 0 };
         SIZE sizeWindow = { clientWidth, clientHeight };
@@ -161,6 +177,42 @@ namespace
             CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
             TASKBAR_DATA* pData = (TASKBAR_DATA*)pCreate->lpCreateParams;
             SetWindowLongPtr(hWnd, GWLP_USERDATA, (LONG_PTR)pData);
+
+            // [추가] Clock 모듈 초기화
+            if (!Clock::Initialize())
+            {
+                // 초기화 실패 시 처리 (예: 에러 메시지 출력 후 창 종료)
+                MessageBox(hWnd, L"시계 리소스를 초기화할 수 없습니다.", L"오류", MB_OK | MB_ICONERROR);
+                return -1; // 창 생성 실패
+            }
+
+
+            SetTimer(hWnd, IDT_CLOCK_TIMER, 1000, NULL);
+
+            // [수정] Clock::FormatTime 함수 호출로 변경
+            Clock::FormatTime(pData->szClock, _countof(pData->szClock));
+            InvalidateRect(hWnd, NULL, FALSE); // 최초 시간 표시를 위해 전체 갱신
+
+            break;
+        }
+        case WM_TIMER:
+        {
+            if (wParam == IDT_CLOCK_TIMER)
+            {
+                // [수정] 타이머 이벤트 발생 시 Clock 모듈을 통해 시간 갱신
+                TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
+                if (pData)
+                {
+                    Clock::FormatTime(pData->szClock, _countof(pData->szClock));
+
+                    // 시계 영역만 갱신
+                    RECT rcClient;
+                    GetClientRect(hWnd, &rcClient);
+                    RECT rcClock = rcClient;
+                    rcClock.left = rcClock.right - 150;
+                    InvalidateRect(hWnd, &rcClock, FALSE);
+                }
+            }
             break;
         }
         case WM_COMMAND:
@@ -266,7 +318,10 @@ namespace
         }
         case WM_DESTROY:
         {
-            // [수정] SHAppBarMessage 호출 제거
+            // [추가] Clock 모듈 리소스 해제
+            Clock::Shutdown();
+
+            KillTimer(hWnd, IDT_CLOCK_TIMER);
             TASKBAR_DATA* pData = (TASKBAR_DATA*)GetWindowLongPtr(hWnd, GWLP_USERDATA);
             if (pData)
             {
@@ -316,13 +371,12 @@ BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
 
-    // [수정] 작업 표시줄의 Y 위치를 직접 계산합니다.
     int taskbarY = screenHeight - TASKBAR_HEIGHT;
 
     HWND hWnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         szWindowClass, szTitle, WS_POPUP,
-        0, taskbarY, screenWidth, TASKBAR_HEIGHT, // [수정] 계산된 위치로 창 생성
+        0, taskbarY, screenWidth, TASKBAR_HEIGHT,
         nullptr, nullptr, hInst, (LPVOID)pData
     );
     if (!hWnd)
@@ -337,8 +391,6 @@ BOOL Taskbar::Create(HINSTANCE hInst, int nCmdShow,
         DestroyWindow(hWnd);
         return FALSE;
     }
-
-    // [수정] SHAppBarMessage 관련 코드 전체 제거
 
     ShowWindow(hWnd, nCmdShow);
     UpdateTaskbarAppearance(hWnd);

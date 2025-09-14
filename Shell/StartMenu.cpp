@@ -250,6 +250,11 @@ namespace
             CloseMenuAndNotify(hWnd);
         }
         break;
+        case WM_CLOSE:
+        {
+            ShowWindow(hWnd, SW_HIDE); // 창을 파괴하지 않고 숨기기만 합니다.
+            return 0;
+        }
         case WM_DESTROY:
         {
             g_menuItems.clear();

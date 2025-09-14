@@ -125,6 +125,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="Clock.h" />
     <ClInclude Include="Constants.h" />
     <ClInclude Include="Desktop.h" />
     <ClInclude Include="framework.h" />
@@ -137,6 +138,7 @@
     <ClInclude Include="Taskbar.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="Clock.cpp" />
     <ClCompile Include="Desktop.cpp" />
     <ClCompile Include="GraphicsUtil.cpp" />
     <ClCompile Include="Shell.cpp" />
